@@ -17,6 +17,10 @@ export default function RootLayout() {
             contentStyle: {backgroundColor: colors.background},
           }}>
           <Stack.Screen name="index" />
+          <Stack.Screen name="auth" />
+          <Stack.Screen name="login" />
+          <Stack.Screen name="sign-up" />
+          <Stack.Screen name="register-device" />
           <Stack.Screen name="dashboard" />
           <Stack.Screen name="paired-online" />
           <Stack.Screen name="setup-intro" />
