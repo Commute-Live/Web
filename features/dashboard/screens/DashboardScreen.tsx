@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {PreviewCard} from '../../../components/PreviewCard';
 import {BottomNav, BottomNavItem} from '../../../components/BottomNav';
@@ -8,8 +8,9 @@ import {useSelectedDevice} from '../../../hooks/useSelectedDevice';
 
 const API_BASE = 'https://api.commutelive.com';
 const NYC_LINES = ['1', '2', '3', '4', '5', '6', '7', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'J', 'L', 'M', 'N', 'Q', 'R', 'W', 'Z'];
-type DestinationOption = {label: string; stopId: string; direction: 'N' | 'S'};
-const FALLBACK_DESTINATION: DestinationOption = {label: 'Times Sq-42 St (N)', stopId: '725N', direction: 'N'};
+const HARDCODED_STOP_ID = '725N';
+const HARDCODED_DIRECTION: 'N' = 'N';
+const HARDCODED_DESTINATION_LABEL = 'Times Sq-42 St (N)';
 
 const navItems: BottomNavItem[] = [
   {key: 'stations', label: 'Stations', icon: 'train-outline', route: '/edit-stations'},
@@ -21,48 +22,8 @@ const navItems: BottomNavItem[] = [
 export default function DashboardScreen() {
   const selectedDevice = useSelectedDevice();
   const [selectedLine, setSelectedLine] = useState('7');
-  const [destinationOptions, setDestinationOptions] = useState<DestinationOption[]>([FALLBACK_DESTINATION]);
-  const [selectedDestination, setSelectedDestination] = useState<DestinationOption>(FALLBACK_DESTINATION);
-  const [destinationOpen, setDestinationOpen] = useState(false);
-  const [destinationQuery, setDestinationQuery] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [statusText, setStatusText] = useState('');
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadStops = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/stops?limit=1000`);
-        if (!response.ok) return;
-        const data = await response.json();
-        const options: DestinationOption[] = Array.isArray(data?.stops)
-          ? data.stops
-              .map((item: any) => {
-                const stop = String(item?.stop ?? '').trim();
-                const stopId = String(item?.stopId ?? '').trim();
-                const directionRaw = String(item?.direction ?? '').toUpperCase();
-                const direction: 'N' | 'S' = directionRaw === 'S' ? 'S' : 'N';
-                if (!stop || !stopId) return null;
-                return {label: `${stop} (${direction})`, stopId, direction} as DestinationOption;
-              })
-              .filter((item: DestinationOption | null): item is DestinationOption => item !== null)
-          : [];
-        if (!cancelled && options.length > 0) {
-          setDestinationOptions(options);
-          const preferred =
-            options.find(option => option.stopId.toUpperCase() === '725N') ??
-            options[0];
-          setSelectedDestination(preferred);
-        }
-      } catch {
-        // keep fallback option
-      }
-    };
-    loadStops();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,30 +33,8 @@ export default function DashboardScreen() {
         if (!response.ok) return;
         const data = await response.json();
         const firstLine = data?.config?.lines?.[0]?.line;
-        const firstStop = data?.config?.lines?.[0]?.stop;
-        const firstDirection = data?.config?.lines?.[0]?.direction;
         if (!cancelled && typeof firstLine === 'string' && firstLine.length > 0) {
           setSelectedLine(firstLine.toUpperCase());
-        }
-        if (!cancelled && typeof firstStop === 'string' && firstStop.length > 0) {
-          const found = destinationOptions.find(
-            option => option.stopId.toUpperCase() === firstStop.toUpperCase(),
-          );
-          if (found) {
-            setSelectedDestination(found);
-          } else if (typeof firstDirection === 'string' && (firstDirection === 'N' || firstDirection === 'S')) {
-            setSelectedDestination({
-              label: `${firstStop} (${firstDirection})`,
-              stopId: firstStop,
-              direction: firstDirection,
-            });
-          } else {
-            setSelectedDestination({
-              label: firstStop,
-              stopId: firstStop,
-              direction: 'N',
-            });
-          }
         }
       } catch {
         // Ignore network/read errors; keep default line.
@@ -109,10 +48,10 @@ export default function DashboardScreen() {
     return () => {
       cancelled = true;
     };
-  }, [selectedDevice.id, destinationOptions]);
+  }, [selectedDevice.id]);
 
   const saveLine = useCallback(
-    async (line: string, destination: DestinationOption) => {
+    async (line: string) => {
       if (!selectedDevice.id) return;
       setSelectedLine(line);
       setIsSaving(true);
@@ -126,8 +65,8 @@ export default function DashboardScreen() {
               {
                 provider: 'mta',
                 line,
-                stop: destination.stopId,
-                direction: destination.direction,
+                stop: HARDCODED_STOP_ID,
+                direction: HARDCODED_DIRECTION,
               },
             ],
           }),
@@ -138,7 +77,7 @@ export default function DashboardScreen() {
         }
 
         await fetch(`${API_BASE}/refresh/device/${selectedDevice.id}`, {method: 'POST'});
-        setStatusText(`Updated ${line} -> ${destination.label}`);
+        setStatusText(`Updated ${line} -> ${HARDCODED_DESTINATION_LABEL}`);
       } catch {
         setStatusText('Network error');
       } finally {
@@ -154,23 +93,15 @@ export default function DashboardScreen() {
         <Pressable
           key={line}
           style={[styles.lineChip, selectedLine === line && styles.lineChipActive]}
-          onPress={() => saveLine(line, selectedDestination)}
+          onPress={() => saveLine(line)}
           disabled={isSaving}>
           <Text style={[styles.lineChipText, selectedLine === line && styles.lineChipTextActive]}>
             {line}
           </Text>
         </Pressable>
       )),
-    [selectedLine, selectedDestination, saveLine, isSaving],
+    [selectedLine, saveLine, isSaving],
   );
-
-  const filteredDestinations = useMemo(() => {
-    const q = destinationQuery.trim().toLowerCase();
-    if (!q) return destinationOptions.slice(0, 250);
-    return destinationOptions
-      .filter(option => option.label.toLowerCase().includes(q) || option.stopId.toLowerCase().includes(q))
-      .slice(0, 250);
-  }, [destinationOptions, destinationQuery]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
@@ -199,37 +130,7 @@ export default function DashboardScreen() {
           <View style={styles.linePickerCard}>
             <Text style={styles.linePickerTitle}>Pick Subway Line</Text>
             <Text style={styles.linePickerSubtitle}>Tap any line to send update to this device.</Text>
-
-            <Text style={styles.destLabel}>Destination</Text>
-            <Pressable
-              style={styles.destPicker}
-              onPress={() => setDestinationOpen(open => !open)}
-              disabled={isSaving}>
-              <Text style={styles.destPickerText}>{selectedDestination.label}</Text>
-            </Pressable>
-            {destinationOpen ? (
-              <View style={styles.destList}>
-                <TextInput
-                  value={destinationQuery}
-                  onChangeText={setDestinationQuery}
-                  placeholder="Search stop name or ID"
-                  placeholderTextColor={colors.textMuted}
-                  style={styles.destSearch}
-                />
-                {filteredDestinations.map(option => (
-                  <Pressable
-                    key={`${option.stopId}-${option.direction}`}
-                    style={styles.destRow}
-                    onPress={() => {
-                      setDestinationOpen(false);
-                      setSelectedDestination(option);
-                      saveLine(selectedLine, option);
-                    }}>
-                    <Text style={styles.destRowText}>{option.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
+            <Text style={styles.destFixed}>Destination: {HARDCODED_DESTINATION_LABEL}</Text>
 
             <View style={styles.lineGrid}>{lineButtons}</View>
             {!!statusText && <Text style={styles.statusNote}>{statusText}</Text>}
@@ -286,41 +187,7 @@ const styles = StyleSheet.create({
   },
   linePickerTitle: {color: colors.text, fontSize: 14, fontWeight: '800'},
   linePickerSubtitle: {color: colors.textMuted, fontSize: 11, marginTop: 2, marginBottom: spacing.sm},
-  destLabel: {color: colors.textMuted, fontSize: 11, marginBottom: 4},
-  destPicker: {
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    backgroundColor: colors.surface,
-    marginBottom: spacing.xs,
-  },
-  destPickerText: {color: colors.text, fontSize: 12, fontWeight: '700'},
-  destList: {
-    borderColor: colors.border,
-    borderWidth: 1,
-    borderRadius: radii.md,
-    overflow: 'hidden',
-    marginBottom: spacing.sm,
-  },
-  destSearch: {
-    backgroundColor: colors.card,
-    color: colors.text,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-    fontSize: 12,
-  },
-  destRow: {
-    backgroundColor: colors.surface,
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-  },
-  destRowText: {color: colors.text, fontSize: 12},
+  destFixed: {color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm},
   lineGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   lineChip: {
     borderColor: colors.border,
