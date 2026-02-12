@@ -7,9 +7,9 @@ import {colors, spacing, radii} from '../../../theme';
 import {useSelectedDevice} from '../../../hooks/useSelectedDevice';
 
 const API_BASE = 'https://api.commutelive.com';
-const NYC_LINES = ['1', '2', '3', '4', '5', '6', '7', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'J', 'L', 'M', 'N', 'Q', 'R', 'W', 'Z'];
 const DEFAULT_STOP_ID = '725N';
 const MAX_SELECTED_LINES = 2;
+type StopOption = {stopId: string; stop: string; direction: 'N' | 'S' | ''};
 
 const navItems: BottomNavItem[] = [
   {key: 'stations', label: 'Stations', icon: 'train-outline', route: '/edit-stations'},
@@ -22,9 +22,15 @@ export default function DashboardScreen() {
   const selectedDevice = useSelectedDevice();
   const [selectedLines, setSelectedLines] = useState<string[]>(['E', 'A']);
   const [stopId, setStopId] = useState(DEFAULT_STOP_ID);
-  const [direction, setDirection] = useState<'N' | 'S'>('N');
+  const [stopName, setStopName] = useState('');
+  const [stopQuery, setStopQuery] = useState('');
+  const [stopOptions, setStopOptions] = useState<StopOption[]>([]);
+  const [isLoadingStops, setIsLoadingStops] = useState(false);
+  const [availableLines, setAvailableLines] = useState<string[]>([]);
+  const [isLoadingLines, setIsLoadingLines] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [stopError, setStopError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -39,18 +45,22 @@ export default function DashboardScreen() {
               .filter((line: string) => line.length > 0)
           : [];
         const firstStopId = typeof data?.config?.lines?.[0]?.stop === 'string' ? data.config.lines[0].stop : '';
-        const firstDirection = typeof data?.config?.lines?.[0]?.direction === 'string'
-          ? data.config.lines[0].direction.toUpperCase()
-          : '';
+        const firstDirection = typeof data?.config?.lines?.[0]?.direction === 'string' ? data.config.lines[0].direction.toUpperCase() : '';
 
         if (!cancelled && configuredLines.length > 0) {
           setSelectedLines(configuredLines.slice(0, MAX_SELECTED_LINES));
         }
         if (!cancelled && firstStopId.length > 0) {
-          setStopId(firstStopId);
+          const normalized = firstStopId.toUpperCase();
+          setStopId(normalized);
+          setStopQuery(normalized);
         }
-        if (!cancelled && (firstDirection === 'N' || firstDirection === 'S')) {
-          setDirection(firstDirection);
+        if (!cancelled && (firstDirection === 'N' || firstDirection === 'S') && firstStopId.length > 0) {
+          setStopId(prev => {
+            const base = prev.length ? prev : firstStopId.toUpperCase();
+            if (base.endsWith('N') || base.endsWith('S')) return base;
+            return `${base}${firstDirection}`;
+          });
         }
       } catch {
         // Ignore network/read errors; keep default line.
@@ -65,6 +75,95 @@ export default function DashboardScreen() {
       cancelled = true;
     };
   }, [selectedDevice.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const q = stopQuery.trim();
+    if (q.length < 2) {
+      setStopOptions([]);
+      return;
+    }
+
+    const run = async () => {
+      setIsLoadingStops(true);
+      try {
+        const response = await fetch(`${API_BASE}/stops?q=${encodeURIComponent(q)}&limit=12`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled) {
+          const options = Array.isArray(data?.stops) ? data.stops : [];
+          setStopOptions(options);
+        }
+      } catch {
+        if (!cancelled) setStopOptions([]);
+      } finally {
+        if (!cancelled) setIsLoadingStops(false);
+      }
+    };
+
+    const t = setTimeout(run, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [stopQuery]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const normalizedStopId = stopId.trim().toUpperCase();
+    if (!normalizedStopId) {
+      setAvailableLines([]);
+      return;
+    }
+
+    const run = async () => {
+      setIsLoadingLines(true);
+      try {
+        const response = await fetch(`${API_BASE}/stops/${encodeURIComponent(normalizedStopId)}/lines`);
+        if (!response.ok) {
+          if (!cancelled) setAvailableLines([]);
+          return;
+        }
+
+        const data = await response.json();
+        const lines = Array.isArray(data?.lines)
+          ? data.lines
+              .map((line: unknown) => (typeof line === 'string' ? line.toUpperCase() : ''))
+              .filter((line: string) => line.length > 0)
+          : [];
+
+        if (!cancelled) {
+          setAvailableLines(lines);
+          setSelectedLines(prev => {
+            const filtered = prev.filter(line => lines.includes(line));
+            if (filtered.length > 0) return filtered.slice(0, MAX_SELECTED_LINES);
+            return lines.slice(0, MAX_SELECTED_LINES);
+          });
+        }
+      } catch {
+        if (!cancelled) setAvailableLines([]);
+      } finally {
+        if (!cancelled) setIsLoadingLines(false);
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stopId]);
+
+  const derivedDirection: 'N' | 'S' = stopId.toUpperCase().endsWith('S') ? 'S' : 'N';
+
+  const chooseStop = useCallback((option: StopOption) => {
+    setStopId(option.stopId.toUpperCase());
+    setStopName(option.stop);
+    setStopQuery(`${option.stop} (${option.stopId})`);
+    setStopOptions([]);
+    setStopError('');
+    setStatusText('');
+  }, []);
 
   const toggleLine = useCallback((line: string) => {
     setStatusText('');
@@ -92,7 +191,8 @@ export default function DashboardScreen() {
 
       const normalizedStopId = stopId.trim().toUpperCase();
       if (!normalizedStopId.length) {
-        setStatusText('Enter a stop ID');
+        setStatusText('Select a stop');
+        setStopError('Select a stop from the list');
         setIsSaving(false);
         return;
       }
@@ -105,7 +205,7 @@ export default function DashboardScreen() {
                 provider: 'mta',
                 line,
                 stop: normalizedStopId,
-                direction,
+                direction: derivedDirection,
               })),
           }),
         });
@@ -115,30 +215,30 @@ export default function DashboardScreen() {
         }
 
         await fetch(`${API_BASE}/refresh/device/${selectedDevice.id}`, {method: 'POST'});
-        setStatusText(`Updated ${selectedLines.join(', ')} at ${normalizedStopId} ${direction}`);
+        setStatusText(`Updated ${selectedLines.join(', ')} at ${normalizedStopId} ${derivedDirection}`);
       } catch {
         setStatusText('Network error');
       } finally {
         setIsSaving(false);
       }
     },
-    [selectedDevice.id, selectedLines, stopId, direction],
+    [selectedDevice.id, selectedLines, stopId, derivedDirection],
   );
 
   const lineButtons = useMemo(
     () =>
-      NYC_LINES.map(line => (
+      availableLines.map(line => (
         <Pressable
           key={line}
           style={[styles.lineChip, selectedLines.includes(line) && styles.lineChipActive]}
           onPress={() => toggleLine(line)}
-          disabled={isSaving}>
+          disabled={isSaving || isLoadingLines}>
           <Text style={[styles.lineChipText, selectedLines.includes(line) && styles.lineChipTextActive]}>
             {line}
           </Text>
         </Pressable>
       )),
-    [selectedLines, toggleLine, isSaving],
+    [availableLines, selectedLines, toggleLine, isSaving, isLoadingLines],
   );
 
   return (
@@ -167,34 +267,44 @@ export default function DashboardScreen() {
 
           <View style={styles.linePickerCard}>
             <Text style={styles.linePickerTitle}>Pick Stop + Lines</Text>
-            <Text style={styles.linePickerSubtitle}>Select up to 2 lines. Example: E + A at 725N.</Text>
+            <Text style={styles.linePickerSubtitle}>Search and select a stop, then select up to 2 lines.</Text>
 
-            <Text style={styles.formLabel}>Stop ID</Text>
+            <Text style={styles.formLabel}>Stop</Text>
             <TextInput
-              value={stopId}
-              onChangeText={setStopId}
-              autoCapitalize="characters"
+              value={stopQuery}
+              onChangeText={text => {
+                setStopQuery(text);
+                setStopError('');
+              }}
               style={styles.input}
-              placeholder="e.g. 725N"
+              placeholder="Search stop (e.g. Port Authority or A27N)"
               placeholderTextColor={colors.textMuted}
             />
+            {isLoadingStops && <Text style={styles.hintText}>Searching stops...</Text>}
+            {!isLoadingStops && stopOptions.length > 0 && (
+              <View style={styles.stopList}>
+                {stopOptions.map(option => (
+                  <Pressable key={option.stopId} style={styles.stopItem} onPress={() => chooseStop(option)}>
+                    <Text style={styles.stopItemTitle}>{option.stop}</Text>
+                    <Text style={styles.stopItemSubtitle}>
+                      {option.stopId} {option.direction ? `(${option.direction})` : ''}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+            {!!stopError && <Text style={styles.errorText}>{stopError}</Text>}
 
-            <Text style={styles.formLabel}>Direction</Text>
-            <View style={styles.directionRow}>
-              <Pressable
-                onPress={() => setDirection('N')}
-                style={[styles.directionChip, direction === 'N' && styles.directionChipActive]}>
-                <Text style={[styles.directionChipText, direction === 'N' && styles.directionChipTextActive]}>Northbound</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => setDirection('S')}
-                style={[styles.directionChip, direction === 'S' && styles.directionChipActive]}>
-                <Text style={[styles.directionChipText, direction === 'S' && styles.directionChipTextActive]}>Southbound</Text>
-              </Pressable>
-            </View>
-
+            <Text style={styles.destFixed}>
+              Stop ID: {stopId || '--'} {stopName ? `| ${stopName}` : ''} | Direction: {derivedDirection}
+            </Text>
             <Text style={styles.destFixed}>Selected lines: {selectedLines.join(', ') || 'None'}</Text>
 
+            <Text style={styles.formLabel}>Available lines for this stop</Text>
+            {isLoadingLines && <Text style={styles.hintText}>Loading lines...</Text>}
+            {!isLoadingLines && availableLines.length === 0 && (
+              <Text style={styles.hintText}>No lines found for this stop yet.</Text>
+            )}
             <View style={styles.lineGrid}>{lineButtons}</View>
             <Pressable style={styles.saveButton} onPress={saveConfig} disabled={isSaving}>
               <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save to Device'}</Text>
@@ -264,7 +374,24 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     marginBottom: spacing.sm,
   },
-  directionRow: {flexDirection: 'row', gap: spacing.xs, marginBottom: spacing.sm},
+  hintText: {color: colors.textMuted, fontSize: 11, marginBottom: spacing.xs},
+  errorText: {color: colors.warning, fontSize: 11, marginBottom: spacing.xs},
+  stopList: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  stopItem: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  stopItemTitle: {color: colors.text, fontSize: 12, fontWeight: '700'},
+  stopItemSubtitle: {color: colors.textMuted, fontSize: 11},
   directionChip: {
     borderColor: colors.border,
     borderWidth: 1,
@@ -273,9 +400,6 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     backgroundColor: colors.surface,
   },
-  directionChipActive: {borderColor: colors.accent, backgroundColor: colors.accentMuted},
-  directionChipText: {color: colors.text, fontSize: 11, fontWeight: '700'},
-  directionChipTextActive: {color: colors.accent},
   destFixed: {color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm},
   lineGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   lineChip: {
