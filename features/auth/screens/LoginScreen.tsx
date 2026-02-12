@@ -3,9 +3,13 @@ import {Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'r
 import {SafeAreaView} from 'react-native-safe-area-context';
 import {useRouter} from 'expo-router';
 import {colors, spacing, radii} from '../../../theme';
+import {useAppState} from '../../../state/appState';
+
+const HARDCODED_DEVICE_ID = 'esp32-B44AC2F16E20';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const {setDeviceId, setDeviceStatus} = useAppState();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
@@ -41,7 +45,13 @@ export default function LoginScreen() {
           />
         </View>
 
-        <Pressable style={styles.primaryButton} onPress={() => router.push('/dashboard')}>
+        <Pressable
+          style={styles.primaryButton}
+          onPress={() => {
+            setDeviceId(HARDCODED_DEVICE_ID);
+            setDeviceStatus('pairedOnline');
+            router.push('/dashboard');
+          }}>
           <Text style={styles.primaryText}>Log in</Text>
         </Pressable>
 
