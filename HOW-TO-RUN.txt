@@ -2,7 +2,7 @@ Commute Live App - How to Run
 
 Docker
 1. cd App
-2. npm run docker:start
+2. npm start
 3. Wait for Expo to boot
 4. Scan the QR code from terminal logs (or open http://localhost:19002)
 
