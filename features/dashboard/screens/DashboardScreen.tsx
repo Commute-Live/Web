@@ -19,7 +19,13 @@ const providerOptions: ProviderOption[] = [
   {id: 'cta-subway', label: 'Chicago Subway'},
 ];
 
-const CTA_LINES = ['RED', 'BLUE', 'BRN', 'G', 'ORG', 'P', 'PINK', 'Y'];
+const CTA_LINES_BY_STOP: Record<string, string[]> = {
+  '40380': ['RED', 'BLUE', 'BRN', 'G', 'ORG', 'P', 'PINK'],
+  '41400': ['RED', 'G', 'ORG'],
+  '40900': ['RED', 'P', 'Y'],
+  '40890': ['BLUE'],
+  '40450': ['RED'],
+};
 const CTA_STOPS: StopOption[] = [
   {stopId: '40380', stop: 'Clark/Lake', direction: ''},
   {stopId: '41400', stop: 'Roosevelt', direction: ''},
@@ -27,6 +33,8 @@ const CTA_STOPS: StopOption[] = [
   {stopId: '40890', stop: "O'Hare", direction: ''},
   {stopId: '40450', stop: '95th/Dan Ryan', direction: ''},
 ];
+
+const getCtaLinesForStop = (id: string) => CTA_LINES_BY_STOP[id] ?? ['RED', 'BLUE'];
 
 const navItems: BottomNavItem[] = [
   {key: 'stations', label: 'Stations', icon: 'train-outline', route: '/edit-stations'},
@@ -107,13 +115,13 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (selectedProvider === 'cta-subway') {
-      setAllStops(CTA_STOPS);
+      const ctaLines = getCtaLinesForStop(stopId.toUpperCase());
       setStopOptions(stopDropdownOpen ? CTA_STOPS : []);
-      setAvailableLines(CTA_LINES);
+      setAvailableLines(ctaLines);
       setSelectedLines(prev => {
-        const filtered = prev.filter(line => CTA_LINES.includes(line));
+        const filtered = prev.filter(line => ctaLines.includes(line));
         if (filtered.length > 0) return filtered.slice(0, MAX_SELECTED_LINES);
-        return CTA_LINES.slice(0, MAX_SELECTED_LINES);
+        return ctaLines.slice(0, MAX_SELECTED_LINES);
       });
       if (!stopId || stopId.endsWith('N') || stopId.endsWith('S')) {
         setStopId(CTA_DEFAULT_STOP_ID);
@@ -168,11 +176,12 @@ export default function DashboardScreen() {
 
   useEffect(() => {
     if (selectedProvider === 'cta-subway') {
-      setAvailableLines(CTA_LINES);
+      const ctaLines = getCtaLinesForStop(stopId.toUpperCase());
+      setAvailableLines(ctaLines);
       setSelectedLines(prev => {
-        const filtered = prev.filter(line => CTA_LINES.includes(line));
+        const filtered = prev.filter(line => ctaLines.includes(line));
         if (filtered.length > 0) return filtered.slice(0, MAX_SELECTED_LINES);
-        return CTA_LINES.slice(0, MAX_SELECTED_LINES);
+        return ctaLines.slice(0, MAX_SELECTED_LINES);
       });
       return;
     }
@@ -349,7 +358,9 @@ export default function DashboardScreen() {
                     setStatusText('');
                     setStopError('');
                     setStopDropdownOpen(false);
+                    setStopOptions([]);
                     if (option.id === 'mta-subway') {
+                      setAllStops([]);
                       setStopId(DEFAULT_STOP_ID);
                       setStopName(DEFAULT_STOP_NAME);
                     } else {
