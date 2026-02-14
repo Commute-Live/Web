@@ -3,6 +3,7 @@ import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-na
 import {colors, radii, spacing} from '../../../theme';
 
 const API_BASE = 'https://api.commutelive.com';
+const MAX_PHILLY_LINES = 2;
 
 type City = 'boston' | 'philadelphia';
 type Mode = 'train' | 'bus';
@@ -41,7 +42,7 @@ const cityTitle = (city: City) => (city === 'boston' ? 'Boston' : 'Philly');
 
 export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
   const [route, setRoute] = useState('');
-  const [selectedLine, setSelectedLine] = useState('');
+  const [selectedLines, setSelectedLines] = useState<string[]>([]);
   const [lineOptions, setLineOptions] = useState<string[]>([]);
   const [isLoadingRoutes, setIsLoadingRoutes] = useState(false);
   const [stops, setStops] = useState<StopOption[]>([]);
@@ -56,7 +57,7 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
 
   useEffect(() => {
     setRoute('');
-    setSelectedLine('');
+    setSelectedLines([]);
     setLineOptions([]);
     setStops([]);
     setStopId('');
@@ -85,7 +86,11 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
           : [];
         if (!cancelled) {
           setLineOptions(nextLines);
-          setSelectedLine(prev => (nextLines.includes(prev) ? prev : nextLines[0] ?? ''));
+          setSelectedLines(prev => {
+            const filtered = prev.filter(line => nextLines.includes(line));
+            if (filtered.length > 0) return filtered.slice(0, MAX_PHILLY_LINES);
+            return nextLines.slice(0, MAX_PHILLY_LINES);
+          });
         }
       } catch {
         if (!cancelled) setLineOptions([]);
@@ -110,14 +115,16 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
         if (!response.ok) return;
         const data = await response.json();
         const rows = Array.isArray(data?.config?.lines) ? data.config.lines : [];
-        const match = rows.find((row: any) => typeof row?.provider === 'string' && row.provider === provider);
-        if (!match || cancelled) return;
+        const matches = rows.filter((row: any) => typeof row?.provider === 'string' && row.provider === provider);
+        if (matches.length === 0 || cancelled) return;
 
-        const savedLine = typeof match?.line === 'string' ? match.line : '';
-        const savedStop = typeof match?.stop === 'string' ? match.stop : '';
-        if (savedLine) {
-          setRoute(savedLine);
-          setSelectedLine(savedLine.toUpperCase());
+        const savedLines = matches
+          .map((row: any) => (typeof row?.line === 'string' ? row.line.toUpperCase().trim() : ''))
+          .filter((line: string) => line.length > 0);
+        const savedStop = typeof matches[0]?.stop === 'string' ? matches[0].stop : '';
+        if (savedLines.length > 0) {
+          setRoute(savedLines[0]);
+          setSelectedLines(savedLines.slice(0, MAX_PHILLY_LINES));
         }
         if (savedStop) {
           setStopId(savedStop);
@@ -189,9 +196,12 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
 
   const saveConfig = useCallback(async () => {
     if (!deviceId) return;
-    const routeTrimmed = city === 'philadelphia' ? selectedLine.trim() : route.trim();
+    const routeTrimmed = route.trim();
+    const linesToSave = city === 'philadelphia'
+      ? selectedLines.map(line => line.trim()).filter(line => line.length > 0).slice(0, MAX_PHILLY_LINES)
+      : (routeTrimmed ? [routeTrimmed] : []);
     const stopTrimmed = stopId.trim();
-    if (!routeTrimmed || !stopTrimmed) {
+    if (linesToSave.length === 0 || !stopTrimmed) {
       setStatusText('Pick line and stop');
       return;
     }
@@ -203,13 +213,11 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-          lines: [
-            {
+          lines: linesToSave.map(line => ({
               provider,
-              line: routeTrimmed,
+              line,
               stop: stopTrimmed,
-            },
-          ],
+            })),
         }),
       });
 
@@ -219,20 +227,20 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
       }
 
       await fetch(`${API_BASE}/refresh/device/${deviceId}`, {method: 'POST'});
-      setStatusText(`Updated ${routeTrimmed} @ ${stopName} (${stopTrimmed})`);
+      setStatusText(`Updated ${linesToSave.join(', ')} @ ${stopName} (${stopTrimmed})`);
     } catch {
       setStatusText('Network error');
     } finally {
       setIsSaving(false);
     }
-  }, [city, deviceId, provider, route, selectedLine, stopId, stopName]);
+  }, [city, deviceId, provider, route, selectedLines, stopId, stopName]);
 
   return (
     <>
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>{cityTitle(city)} {mode === 'train' ? 'Train' : 'Bus'}</Text>
         {city === 'philadelphia' ? (
-          <Text style={styles.hintText}>Pick station first, then choose line.</Text>
+          <Text style={styles.hintText}>Pick station first, then choose up to 2 lines.</Text>
         ) : (
           <>
             <Text style={styles.hintText}>
@@ -290,15 +298,24 @@ export default function RegionalTransitConfig({deviceId, city, mode}: Props) {
           <>
             {isLoadingRoutes && <Text style={styles.hintText}>Loading lines...</Text>}
             {!isLoadingRoutes && lineOptions.length === 0 && <Text style={styles.hintText}>No lines for this stop</Text>}
+            {!!selectedLines.length && <Text style={styles.hintText}>Selected: {selectedLines.join(', ')}</Text>}
             <View style={styles.lineGrid}>
               {lineOptions.map(line => {
-                const isSelected = selectedLine === line;
+                const isSelected = selectedLines.includes(line);
                 return (
                   <Pressable
                     key={line}
                     style={[styles.lineChip, isSelected && styles.lineChipActive]}
                     onPress={() => {
-                      setSelectedLine(line);
+                      setSelectedLines(prev => {
+                        if (prev.includes(line)) {
+                          return prev.filter(item => item !== line);
+                        }
+                        if (prev.length >= MAX_PHILLY_LINES) {
+                          return [...prev.slice(1), line];
+                        }
+                        return [...prev, line];
+                      });
                       setStatusText('');
                     }}>
                     <Text style={[styles.lineChipText, isSelected && styles.lineChipTextActive]}>{line}</Text>
