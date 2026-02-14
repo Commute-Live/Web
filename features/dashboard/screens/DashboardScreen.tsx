@@ -50,6 +50,7 @@ export default function DashboardScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [statusText, setStatusText] = useState('');
   const [stopError, setStopError] = useState('');
+  const isNycSubway = selectedProvider === 'mta-subway';
 
   useEffect(() => {
     let cancelled = false;
@@ -368,30 +369,60 @@ export default function DashboardScreen() {
             </View>
           </View>
 
-          <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Pick Station</Text>
+          {isNycSubway ? (
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>NYC Station</Text>
 
-            <Pressable
-              style={({pressed}) => [
-                styles.stationSelector,
-                stopDropdownOpen && styles.stationSelectorOpen,
-                pressed && styles.stationSelectorPressed,
-              ]}
-              onPress={() => {
-                setStopDropdownOpen(prev => !prev);
-                setStopError('');
-              }}>
-              <Text style={styles.stationSelectorText}>
-                {stopName} ({stopId})
-              </Text>
-              <Text style={styles.stationSelectorCaret}>{stopDropdownOpen ? '▲' : '▼'}</Text>
-            </Pressable>
+              <Pressable
+                style={({pressed}) => [
+                  styles.stationSelector,
+                  stopDropdownOpen && styles.stationSelectorOpen,
+                  pressed && styles.stationSelectorPressed,
+                ]}
+                onPress={() => {
+                  setStopDropdownOpen(prev => !prev);
+                  setStopError('');
+                }}>
+                <Text style={styles.stationSelectorText}>
+                  {stopName} ({stopId})
+                </Text>
+                <Text style={styles.stationSelectorCaret}>{stopDropdownOpen ? '▲' : '▼'}</Text>
+              </Pressable>
 
-            {isLoadingStops && <Text style={styles.hintText}>Searching stops...</Text>}
-            {stopDropdownOpen && !isLoadingStops && stopOptions.length > 0 && (
+              {isLoadingStops && <Text style={styles.hintText}>Searching NYC subway stops...</Text>}
+              {stopDropdownOpen && !isLoadingStops && stopOptions.length > 0 && (
+                <View style={styles.stopList}>
+                  <ScrollView style={styles.stopListScroll} nestedScrollEnabled>
+                    {stopOptions.map(option => {
+                      const isSelected = option.stopId.toUpperCase() === stopId.toUpperCase();
+                      return (
+                        <Pressable
+                          key={option.stopId}
+                          style={({pressed}) => [
+                            styles.stopItem,
+                            isSelected && styles.stopItemSelected,
+                            pressed && styles.stopItemPressed,
+                          ]}
+                          onPress={() => chooseStop(option)}>
+                          <Text style={styles.stopItemTitle}>{option.stop}</Text>
+                          <Text style={styles.stopItemSubtitle}>
+                            {option.stopId} {option.direction ? `(${option.direction})` : ''}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              )}
+              {!!stopError && <Text style={styles.errorText}>{stopError}</Text>}
+            </View>
+          ) : (
+            <View style={styles.sectionCard}>
+              <Text style={styles.sectionTitle}>Chicago Station</Text>
+              <Text style={styles.hintText}>Choose a CTA station:</Text>
               <View style={styles.stopList}>
                 <ScrollView style={styles.stopListScroll} nestedScrollEnabled>
-                  {stopOptions.map(option => {
+                  {CTA_STOPS.map(option => {
                     const isSelected = option.stopId.toUpperCase() === stopId.toUpperCase();
                     return (
                       <Pressable
@@ -403,24 +434,21 @@ export default function DashboardScreen() {
                         ]}
                         onPress={() => chooseStop(option)}>
                         <Text style={styles.stopItemTitle}>{option.stop}</Text>
-                        <Text style={styles.stopItemSubtitle}>
-                          {option.stopId} {option.direction ? `(${option.direction})` : ''}
-                        </Text>
+                        <Text style={styles.stopItemSubtitle}>{option.stopId}</Text>
                       </Pressable>
                     );
                   })}
                 </ScrollView>
               </View>
-            )}
-            {!!stopError && <Text style={styles.errorText}>{stopError}</Text>}
-          </View>
+            </View>
+          )}
 
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>Pick Trains</Text>
+            <Text style={styles.sectionTitle}>{isNycSubway ? 'NYC Trains' : 'Chicago Trains'}</Text>
             <Text style={styles.hintText}>Select up to 2 lines for {stopId}.</Text>
             <Text style={styles.destFixed}>Selected: {selectedLines.join(', ') || 'None'}</Text>
 
-            {isLoadingLines && <Text style={styles.hintText}>Loading lines...</Text>}
+            {isLoadingLines && isNycSubway && <Text style={styles.hintText}>Loading lines...</Text>}
             {!isLoadingLines && availableLines.length === 0 && (
               <Text style={styles.hintText}>No lines found for this stop yet.</Text>
             )}
