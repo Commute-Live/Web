@@ -1,0 +1,393 @@
+import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {colors, radii, spacing} from '../../../theme';
+
+const API_BASE = 'https://api.commutelive.com';
+const DEFAULT_STOP_ID = '725N';
+const DEFAULT_STOP_NAME = 'Times Sq-42 St';
+const MAX_SELECTED_LINES = 2;
+
+type StopOption = {stopId: string; stop: string; direction: 'N' | 'S' | ''};
+
+type Props = {
+  deviceId: string;
+};
+
+export default function NycSubwayConfig({deviceId}: Props) {
+  const [selectedLines, setSelectedLines] = useState<string[]>(['E', 'A']);
+  const [stopId, setStopId] = useState(DEFAULT_STOP_ID);
+  const [stopName, setStopName] = useState(DEFAULT_STOP_NAME);
+  const [allStops, setAllStops] = useState<StopOption[]>([]);
+  const [stopOptions, setStopOptions] = useState<StopOption[]>([]);
+  const [stopDropdownOpen, setStopDropdownOpen] = useState(false);
+  const [isLoadingStops, setIsLoadingStops] = useState(false);
+  const [availableLines, setAvailableLines] = useState<string[]>([]);
+  const [isLoadingLines, setIsLoadingLines] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [statusText, setStatusText] = useState('');
+  const [stopError, setStopError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadConfig = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/device/${deviceId}/config`);
+        if (!response.ok) return;
+        const data = await response.json();
+        const firstProvider = typeof data?.config?.lines?.[0]?.provider === 'string' ? data.config.lines[0].provider : '';
+        if (firstProvider !== 'mta-subway' && firstProvider !== 'mta') return;
+
+        const configuredLines = Array.isArray(data?.config?.lines)
+          ? data.config.lines
+              .map((line: any) => (typeof line?.line === 'string' ? line.line.toUpperCase() : ''))
+              .filter((line: string) => line.length > 0)
+          : [];
+        const firstStopId = typeof data?.config?.lines?.[0]?.stop === 'string' ? data.config.lines[0].stop : '';
+        const firstDirection =
+          typeof data?.config?.lines?.[0]?.direction === 'string' ? data.config.lines[0].direction.toUpperCase() : '';
+
+        if (!cancelled && configuredLines.length > 0) {
+          setSelectedLines(configuredLines.slice(0, MAX_SELECTED_LINES));
+        }
+        if (!cancelled && firstStopId.length > 0) {
+          const normalized = firstStopId.toUpperCase();
+          if (normalized.endsWith('N') || normalized.endsWith('S')) {
+            setStopId(normalized);
+          } else if (firstDirection === 'N' || firstDirection === 'S') {
+            setStopId(`${normalized}${firstDirection}`);
+          } else {
+            setStopId(normalized);
+          }
+        }
+      } catch {
+        // Keep defaults.
+      }
+    };
+
+    if (deviceId) {
+      void loadConfig();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deviceId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!stopDropdownOpen) return;
+
+    const run = async () => {
+      if (allStops.length > 0) return;
+      setIsLoadingStops(true);
+      try {
+        const response = await fetch(`${API_BASE}/stops?limit=1000`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled) {
+          const options = Array.isArray(data?.stops) ? (data.stops as StopOption[]) : [];
+          setAllStops(options);
+        }
+      } catch {
+        if (!cancelled) setAllStops([]);
+      } finally {
+        if (!cancelled) setIsLoadingStops(false);
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stopDropdownOpen, allStops.length]);
+
+  useEffect(() => {
+    if (!stopDropdownOpen) {
+      setStopOptions([]);
+      return;
+    }
+    setStopOptions(allStops);
+  }, [allStops, stopDropdownOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const normalizedStopId = stopId.trim().toUpperCase();
+    if (!normalizedStopId) {
+      setAvailableLines([]);
+      return;
+    }
+
+    const run = async () => {
+      setIsLoadingLines(true);
+      try {
+        const response = await fetch(`${API_BASE}/stops/${encodeURIComponent(normalizedStopId)}/lines`);
+        if (!response.ok) {
+          if (!cancelled) setAvailableLines([]);
+          return;
+        }
+
+        const data = await response.json();
+        const lines = Array.isArray(data?.lines)
+          ? data.lines
+              .map((line: unknown) => (typeof line === 'string' ? line.toUpperCase() : ''))
+              .filter((line: string) => line.length > 0)
+          : [];
+
+        if (!cancelled) {
+          setAvailableLines(lines);
+          setSelectedLines(prev => {
+            const filtered = prev.filter(line => lines.includes(line));
+            if (filtered.length > 0) return filtered.slice(0, MAX_SELECTED_LINES);
+            return lines.slice(0, MAX_SELECTED_LINES);
+          });
+        }
+      } catch {
+        if (!cancelled) setAvailableLines([]);
+      } finally {
+        if (!cancelled) setIsLoadingLines(false);
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stopId]);
+
+  const chooseStop = useCallback((option: StopOption) => {
+    setStopId(option.stopId.toUpperCase());
+    setStopName(option.stop);
+    setStopOptions([]);
+    setStopDropdownOpen(false);
+    setStopError('');
+    setStatusText('');
+  }, []);
+
+  const toggleLine = useCallback((line: string) => {
+    setStatusText('');
+    setSelectedLines(prev => {
+      if (prev.includes(line)) {
+        return prev.filter(item => item !== line);
+      }
+      if (prev.length >= MAX_SELECTED_LINES) {
+        return [...prev.slice(1), line];
+      }
+      return [...prev, line];
+    });
+  }, []);
+
+  const derivedDirection: 'N' | 'S' = stopId.toUpperCase().endsWith('S') ? 'S' : 'N';
+
+  const saveConfig = useCallback(async () => {
+    if (!deviceId) return;
+    setIsSaving(true);
+    setStatusText('');
+
+    if (selectedLines.length === 0) {
+      setStatusText('Select at least one line');
+      setIsSaving(false);
+      return;
+    }
+
+    const normalizedStopId = stopId.trim().toUpperCase();
+    if (!normalizedStopId.length) {
+      setStatusText('Select a stop');
+      setStopError('Select a stop from the list');
+      setIsSaving(false);
+      return;
+    }
+
+    try {
+      const configResponse = await fetch(`${API_BASE}/device/${deviceId}/config`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          lines: selectedLines.map(line => ({
+            provider: 'mta-subway',
+            line,
+            stop: normalizedStopId,
+            direction: derivedDirection,
+          })),
+        }),
+      });
+
+      if (!configResponse.ok) {
+        setStatusText('Failed to save line');
+        return;
+      }
+
+      await fetch(`${API_BASE}/refresh/device/${deviceId}`, {method: 'POST'});
+      setStatusText(`Updated ${selectedLines.join(', ')} at ${normalizedStopId} ${derivedDirection}`);
+    } catch {
+      setStatusText('Network error');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [deviceId, selectedLines, stopId, derivedDirection]);
+
+  const lineButtons = useMemo(
+    () =>
+      availableLines.map(line => (
+        <Pressable
+          key={line}
+          style={[styles.lineChip, selectedLines.includes(line) && styles.lineChipActive]}
+          onPress={() => toggleLine(line)}
+          disabled={isSaving || isLoadingLines}>
+          <Text style={[styles.lineChipText, selectedLines.includes(line) && styles.lineChipTextActive]}>{line}</Text>
+        </Pressable>
+      )),
+    [availableLines, selectedLines, toggleLine, isSaving, isLoadingLines],
+  );
+
+  return (
+    <>
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>NYC Station</Text>
+
+        <Pressable
+          style={({pressed}) => [
+            styles.stationSelector,
+            stopDropdownOpen && styles.stationSelectorOpen,
+            pressed && styles.stationSelectorPressed,
+          ]}
+          onPress={() => {
+            setStopDropdownOpen(prev => !prev);
+            setStopError('');
+          }}>
+          <Text style={styles.stationSelectorText}>
+            {stopName} ({stopId})
+          </Text>
+          <Text style={styles.stationSelectorCaret}>{stopDropdownOpen ? '▲' : '▼'}</Text>
+        </Pressable>
+
+        {isLoadingStops && <Text style={styles.hintText}>Searching NYC subway stops...</Text>}
+        {stopDropdownOpen && !isLoadingStops && stopOptions.length > 0 && (
+          <View style={styles.stopList}>
+            <ScrollView style={styles.stopListScroll} nestedScrollEnabled>
+              {stopOptions.map(option => {
+                const isSelected = option.stopId.toUpperCase() === stopId.toUpperCase();
+                return (
+                  <Pressable
+                    key={option.stopId}
+                    style={({pressed}) => [
+                      styles.stopItem,
+                      isSelected && styles.stopItemSelected,
+                      pressed && styles.stopItemPressed,
+                    ]}
+                    onPress={() => chooseStop(option)}>
+                    <Text style={styles.stopItemTitle}>{option.stop}</Text>
+                    <Text style={styles.stopItemSubtitle}>
+                      {option.stopId} {option.direction ? `(${option.direction})` : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+        {!!stopError && <Text style={styles.errorText}>{stopError}</Text>}
+      </View>
+
+      <View style={styles.sectionCard}>
+        <Text style={styles.sectionTitle}>NYC Trains</Text>
+        <Text style={styles.hintText}>Select up to 2 lines for {stopId}.</Text>
+        <Text style={styles.destFixed}>Selected: {selectedLines.join(', ') || 'None'}</Text>
+
+        {isLoadingLines && <Text style={styles.hintText}>Loading lines...</Text>}
+        {!isLoadingLines && availableLines.length === 0 && (
+          <Text style={styles.hintText}>No lines found for this stop yet.</Text>
+        )}
+        <View style={styles.lineGrid}>{lineButtons}</View>
+
+        <Pressable style={styles.saveButton} onPress={saveConfig} disabled={isSaving}>
+          <Text style={styles.saveButtonText}>{isSaving ? 'Saving...' : 'Save to Device'}</Text>
+        </Pressable>
+
+        {!!statusText && <Text style={styles.statusNote}>{statusText}</Text>}
+      </View>
+    </>
+  );
+}
+
+const styles = StyleSheet.create({
+  sectionCard: {
+    backgroundColor: colors.card,
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  sectionTitle: {color: colors.text, fontSize: 16, fontWeight: '800', marginBottom: spacing.sm},
+  stationSelector: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  stationSelectorOpen: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentMuted,
+  },
+  stationSelectorPressed: {opacity: 0.9},
+  stationSelectorText: {color: colors.text, fontSize: 12, fontWeight: '700', flexShrink: 1},
+  stationSelectorCaret: {color: colors.textMuted, fontSize: 10, marginLeft: spacing.xs},
+  hintText: {color: colors.textMuted, fontSize: 11, marginBottom: spacing.xs},
+  errorText: {color: colors.warning, fontSize: 11, marginBottom: spacing.xs},
+  stopList: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  stopListScroll: {maxHeight: 260},
+  stopItem: {
+    borderBottomColor: colors.border,
+    borderBottomWidth: 1,
+    backgroundColor: colors.surface,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  stopItemSelected: {
+    backgroundColor: colors.accentMuted,
+    borderBottomColor: colors.accent,
+  },
+  stopItemPressed: {opacity: 0.85},
+  stopItemTitle: {color: colors.text, fontSize: 12, fontWeight: '700'},
+  stopItemSubtitle: {color: colors.textMuted, fontSize: 11},
+  destFixed: {color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm},
+  lineGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
+  lineChip: {
+    borderColor: colors.border,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface,
+  },
+  lineChipActive: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentMuted,
+  },
+  lineChipText: {color: colors.text, fontSize: 12, fontWeight: '700'},
+  lineChipTextActive: {color: colors.accent},
+  saveButton: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.accent,
+    borderRadius: radii.md,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+  },
+  saveButtonText: {color: colors.background, fontSize: 12, fontWeight: '800'},
+  statusNote: {color: colors.textMuted, fontSize: 11, marginTop: spacing.sm},
+});
