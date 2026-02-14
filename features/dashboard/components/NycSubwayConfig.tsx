@@ -150,16 +150,17 @@ export default function NycSubwayConfig({deviceId, providerId = 'mta-subway'}: P
 
     const run = async () => {
       const primaryRoute = selectedLines[0]?.trim().toUpperCase();
-      if (!primaryRoute) {
+      if (isBusMode && !primaryRoute) {
         if (!cancelled) setAllStops([]);
         return;
       }
       setIsLoadingStops(true);
       try {
-        const path = isBusMode ? 'bus' : 'subway';
-        const response = await fetch(
-          `${API_BASE}/providers/new-york/stops/${path}?route=${encodeURIComponent(primaryRoute)}&limit=1000`,
-        );
+        const response = isBusMode
+          ? await fetch(
+              `${API_BASE}/providers/new-york/stops/bus?route=${encodeURIComponent(primaryRoute)}&limit=1000`,
+            )
+          : await fetch(`${API_BASE}/stops?limit=1000`);
         if (!response.ok) return;
         const data = await response.json();
         if (!cancelled) {
