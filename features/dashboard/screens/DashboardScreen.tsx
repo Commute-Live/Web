@@ -211,7 +211,7 @@ export default function DashboardScreen() {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             lines: selectedLines.map(line => ({
-                provider: 'mta',
+                provider: 'mta-subway',
                 line,
                 stop: normalizedStopId,
                 direction: derivedDirection,
