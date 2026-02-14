@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {colors, radii, spacing} from '../../../theme';
 
 const API_BASE = 'https://api.commutelive.com';
@@ -15,6 +15,8 @@ type Props = {
 
 export default function ChicagoSubwayConfig({deviceId}: Props) {
   const [stops, setStops] = useState<StopOption[]>([]);
+  const [isLoadingStops, setIsLoadingStops] = useState(false);
+  const [stopsError, setStopsError] = useState('');
   const [selectedLines, setSelectedLines] = useState<string[]>(['BLUE']);
   const [stopId, setStopId] = useState(CTA_DEFAULT_STOP_ID);
   const [stopName, setStopName] = useState(CTA_DEFAULT_STOP_NAME);
@@ -22,18 +24,16 @@ export default function ChicagoSubwayConfig({deviceId}: Props) {
   const [isLoadingLines, setIsLoadingLines] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [statusText, setStatusText] = useState('');
-  const [stopQuery, setStopQuery] = useState('');
-
-  const filteredStops = useMemo(() => {
-    const q = stopQuery.trim().toLowerCase();
-    if (!q) return stops;
-    return stops.filter(option => option.stop.toLowerCase().includes(q) || option.stopId.toLowerCase().includes(q));
-  }, [stops, stopQuery]);
+  const [stopDropdownOpen, setStopDropdownOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     const loadOptions = async () => {
+      if (!cancelled) {
+        setIsLoadingStops(true);
+        setStopsError('');
+      }
       try {
         const stopsResponse = await fetch(`${API_BASE}/providers/chicago/stops/subway?limit=1000`);
 
@@ -57,9 +57,13 @@ export default function ChicagoSubwayConfig({deviceId}: Props) {
             setStopId(nextStops[0].stopId);
             setStopName(nextStops[0].stop);
           }
+        } else {
+          setStopsError('Failed to load CTA stations');
         }
       } catch {
-        // Keep defaults if options endpoint fails.
+        if (!cancelled) setStopsError('Failed to load CTA stations');
+      } finally {
+        if (!cancelled) setIsLoadingStops(false);
       }
     };
 
@@ -171,9 +175,48 @@ export default function ChicagoSubwayConfig({deviceId}: Props) {
     };
   }, [stopId]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!stopDropdownOpen || stops.length > 0 || isLoadingStops) return;
+
+    const retryLoadStops = async () => {
+      setIsLoadingStops(true);
+      setStopsError('');
+      try {
+        const response = await fetch(`${API_BASE}/providers/chicago/stops/subway?limit=1000`);
+        if (!response.ok) {
+          if (!cancelled) setStopsError('Failed to load CTA stations');
+          return;
+        }
+        const data = await response.json();
+        const nextStops: StopOption[] = Array.isArray(data?.stops)
+          ? data.stops
+              .map((item: any) => ({
+                stopId: typeof item?.stopId === 'string' ? item.stopId : '',
+                stop: typeof item?.stop === 'string' ? item.stop : '',
+                direction: '',
+              }))
+              .filter((item: StopOption) => item.stopId.length > 0 && item.stop.length > 0)
+          : [];
+        if (!cancelled) setStops(nextStops);
+      } catch {
+        if (!cancelled) setStopsError('Failed to load CTA stations');
+      } finally {
+        if (!cancelled) setIsLoadingStops(false);
+      }
+    };
+
+    void retryLoadStops();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [stopDropdownOpen, stops.length, isLoadingStops]);
+
   const chooseStop = useCallback((option: StopOption) => {
     setStopId(option.stopId);
     setStopName(option.stop);
+    setStopDropdownOpen(false);
     setStatusText('');
   }, []);
 
@@ -246,30 +289,47 @@ export default function ChicagoSubwayConfig({deviceId}: Props) {
     <>
       <View style={styles.sectionCard}>
         <Text style={styles.sectionTitle}>Chicago Station</Text>
-        <Text style={styles.hintText}>Choose a CTA station (from GTFS data):</Text>
-        <TextInput
-          value={stopQuery}
-          onChangeText={setStopQuery}
-          placeholder="Search CTA station"
-          placeholderTextColor={colors.textMuted}
-          style={styles.input}
-        />
-        <View style={styles.stopList}>
-          <ScrollView style={styles.stopListScroll} nestedScrollEnabled>
-            {filteredStops.map(option => {
-              const isSelected = option.stopId.toUpperCase() === stopId.toUpperCase();
-              return (
-                <Pressable
-                  key={option.stopId}
-                  style={({pressed}) => [styles.stopItem, isSelected && styles.stopItemSelected, pressed && styles.stopItemPressed]}
-                  onPress={() => chooseStop(option)}>
-                  <Text style={styles.stopItemTitle}>{option.stop}</Text>
-                  <Text style={styles.stopItemSubtitle}>{option.stopId}</Text>
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
+        <Pressable
+          style={({pressed}) => [
+            styles.stationSelector,
+            stopDropdownOpen && styles.stationSelectorOpen,
+            pressed && styles.stationSelectorPressed,
+          ]}
+          onPress={() => setStopDropdownOpen(prev => !prev)}>
+          <Text style={styles.stationSelectorText}>
+            {stopName} ({stopId})
+          </Text>
+          <Text style={styles.stationSelectorCaret}>{stopDropdownOpen ? '▲' : '▼'}</Text>
+        </Pressable>
+
+        {isLoadingStops && <Text style={styles.hintText}>Loading CTA stations...</Text>}
+        {!!stopsError && <Text style={styles.hintText}>{stopsError}</Text>}
+
+        {stopDropdownOpen && (
+          <View style={styles.stopList}>
+            <ScrollView style={styles.stopListScroll} nestedScrollEnabled>
+              {stops.length === 0 && !isLoadingStops && (
+                <Text style={styles.emptyText}>No stations available.</Text>
+              )}
+              {stops.map(option => {
+                const isSelected = option.stopId.toUpperCase() === stopId.toUpperCase();
+                return (
+                  <Pressable
+                    key={option.stopId}
+                    style={({pressed}) => [
+                      styles.stopItem,
+                      isSelected && styles.stopItemSelected,
+                      pressed && styles.stopItemPressed,
+                    ]}
+                    onPress={() => chooseStop(option)}>
+                    <Text style={styles.stopItemTitle}>{option.stop}</Text>
+                    <Text style={styles.stopItemSubtitle}>{option.stopId}</Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
       </View>
 
       <View style={styles.sectionCard}>
@@ -302,15 +362,26 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {color: colors.text, fontSize: 16, fontWeight: '800', marginBottom: spacing.sm},
   hintText: {color: colors.textMuted, fontSize: 11, marginBottom: spacing.xs},
-  input: {
-    borderRadius: radii.md,
-    backgroundColor: colors.card,
-    borderWidth: 1,
+  stationSelector: {
     borderColor: colors.border,
-    padding: spacing.md,
-    color: colors.text,
+    borderWidth: 1,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.surface,
+    marginTop: spacing.sm,
     marginBottom: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
+  stationSelectorOpen: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accentMuted,
+  },
+  stationSelectorPressed: {opacity: 0.9},
+  stationSelectorText: {color: colors.text, fontSize: 12, fontWeight: '700', flexShrink: 1},
+  stationSelectorCaret: {color: colors.textMuted, fontSize: 10, marginLeft: spacing.xs},
   stopList: {
     borderColor: colors.border,
     borderWidth: 1,
@@ -333,6 +404,7 @@ const styles = StyleSheet.create({
   stopItemPressed: {opacity: 0.85},
   stopItemTitle: {color: colors.text, fontSize: 12, fontWeight: '700'},
   stopItemSubtitle: {color: colors.textMuted, fontSize: 11},
+  emptyText: {color: colors.textMuted, fontSize: 12, padding: spacing.sm},
   destFixed: {color: colors.textMuted, fontSize: 12, marginBottom: spacing.sm},
   lineGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
   lineChip: {
