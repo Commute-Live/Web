@@ -9,10 +9,11 @@ import ChicagoSubwayConfig from '../components/ChicagoSubwayConfig';
 
 const API_BASE = 'https://api.commutelive.com';
 
-type ProviderOption = {id: 'mta-subway' | 'cta-subway'; label: string};
+type ProviderOption = {id: 'mta-subway' | 'mta-bus' | 'cta-subway'; label: string};
 
 const providerOptions: ProviderOption[] = [
   {id: 'mta-subway', label: 'NYC Subway'},
+  {id: 'mta-bus', label: 'NYC Bus'},
   {id: 'cta-subway', label: 'Chicago Subway'},
 ];
 
@@ -36,7 +37,7 @@ export default function DashboardScreen() {
         const data = await response.json();
         const firstProvider = typeof data?.config?.lines?.[0]?.provider === 'string' ? data.config.lines[0].provider : '';
 
-        if (!cancelled && (firstProvider === 'mta-subway' || firstProvider === 'cta-subway')) {
+        if (!cancelled && (firstProvider === 'mta-subway' || firstProvider === 'mta-bus' || firstProvider === 'cta-subway')) {
           setSelectedProvider(firstProvider);
         }
       } catch {
@@ -92,8 +93,8 @@ export default function DashboardScreen() {
             </View>
           </View>
 
-          {selectedProvider === 'mta-subway' ? (
-            <NycSubwayConfig deviceId={selectedDevice.id} />
+          {selectedProvider === 'mta-subway' || selectedProvider === 'mta-bus' ? (
+            <NycSubwayConfig deviceId={selectedDevice.id} providerId={selectedProvider} />
           ) : (
             <ChicagoSubwayConfig deviceId={selectedDevice.id} />
           )}
